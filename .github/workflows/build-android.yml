@@ -1,6 +1,6 @@
 name: Build Android APK
 
-run-name: Build ${{ inputs.source_ref }} (${{ inputs.build_mode }})
+run-name: Build ${{ inputs.version_tag }} from ${{ inputs.source_ref }} (${{ inputs.build_mode }})
 
 on:
   workflow_dispatch:
@@ -9,6 +9,10 @@ on:
         description: Branch, tag, or commit from dashboard_android
         required: true
         default: main
+        type: string
+      version_tag:
+        description: Semantic version tag, for example v0.0.27
+        required: true
         type: string
       build_mode:
         description: APK build mode
@@ -20,10 +24,10 @@ on:
           - debug
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: android-${{ inputs.source_ref }}-${{ inputs.build_mode }}
+  group: android-${{ inputs.version_tag }}-${{ inputs.build_mode }}
   cancel-in-progress: false
 
 jobs:
@@ -32,6 +36,33 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      - name: Validate release inputs
+        env:
+          INPUT_VERSION_TAG: ${{ inputs.version_tag }}
+          BUILD_MODE: ${{ inputs.build_mode }}
+          GH_TOKEN: ${{ github.token }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          if [[ ! "$INPUT_VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version_tag must match vMAJOR.MINOR.PATCH, for example v0.0.27"
+            exit 1
+          fi
+
+          echo "RELEASE_TAG=$INPUT_VERSION_TAG" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=${INPUT_VERSION_TAG#v}" >> "$GITHUB_ENV"
+
+          if [[ "$BUILD_MODE" == "release" ]]; then
+            if [[ -z "$OSS_ACCESS_KEY_ID" || -z "$OSS_ACCESS_KEY_SECRET" ]]; then
+              echo "::error::OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must be configured as Actions secrets"
+              exit 1
+            fi
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$INPUT_VERSION_TAG" >/dev/null 2>&1; then
+              echo "::error::Tag $INPUT_VERSION_TAG already exists in $GITHUB_REPOSITORY"
+              exit 1
+            fi
+          fi
+
       - name: Check out private source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,6 +72,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
           path: source
+
+      - name: Record source revision
+        working-directory: source
+        run: echo "SOURCE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Set up Java 21
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -70,12 +105,74 @@ jobs:
 
       - name: Build APK
         working-directory: source/example
-        run: flutter build apk --${{ inputs.build_mode }} --no-pub
+        env:
+          BUILD_MODE: ${{ inputs.build_mode }}
+        run: >-
+          flutter build apk --"$BUILD_MODE" --no-pub
+          --build-name "$RELEASE_VERSION"
+          --build-number "$GITHUB_RUN_NUMBER"
 
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dashboard-android-${{ inputs.build_mode }}-${{ github.run_number }}
-          path: source/example/build/app/outputs/flutter-apk/*.apk
+          name: dashboard-android-${{ env.RELEASE_TAG }}-${{ inputs.build_mode }}
+          path: source/example/build/app/outputs/flutter-apk/app-${{ inputs.build_mode }}.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Install ossutil
+        if: inputs.build_mode == 'release'
+        run: |
+          archive="$RUNNER_TEMP/ossutil-2.3.0-linux-amd64.zip"
+          install_dir="$RUNNER_TEMP/ossutil-bin"
+          curl --fail --location --retry 3 --output "$archive" \
+            https://gosspublic.alicdn.com/ossutil/v2/2.3.0/ossutil-2.3.0-linux-amd64.zip
+          echo "3ae4d9fc85a7a6e9f5654d1599766f1a3a42a3692870887b5ae9338d582ef65a  $archive" \
+            | sha256sum --check
+          mkdir -p "$install_dir"
+          unzip -q "$archive" -d "$install_dir"
+          chmod 755 "$install_dir/ossutil-2.3.0-linux-amd64/ossutil"
+          echo "$install_dir/ossutil-2.3.0-linux-amd64" >> "$GITHUB_PATH"
+
+      - name: Publish release APK to OSS
+        if: inputs.build_mode == 'release'
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_REGION: cn-shanghai
+          OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+        run: |
+          apk="source/example/build/app/outputs/flutter-apk/app-release.apk"
+          versioned_object="oss://quic-console-ota/release/versions/$RELEASE_TAG/app-release.apk"
+          latest_object="oss://quic-console-ota/release/latest/app-release.apk"
+
+          test -f "$apk"
+          sha256sum "$apk"
+          ossutil cp "$apk" "$versioned_object" --force \
+            --content-type application/vnd.android.package-archive \
+            --cache-control "public, max-age=31536000, immutable" \
+            --metadata "version=$RELEASE_VERSION" \
+            --metadata "build_code=$GITHUB_RUN_NUMBER" \
+            --metadata "source_commit=$SOURCE_COMMIT"
+          ossutil cp "$apk" "$latest_object" --force \
+            --content-type application/vnd.android.package-archive \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --metadata "version=$RELEASE_VERSION" \
+            --metadata "build_code=$GITHUB_RUN_NUMBER" \
+            --metadata "source_commit=$SOURCE_COMMIT"
+          ossutil stat "$latest_object"
+
+      - name: Tag published release
+        if: inputs.build_mode == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_object_sha=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+            -f tag="$RELEASE_TAG" \
+            -f message="Android $RELEASE_VERSION from andless-tech/dashboard_android@$SOURCE_COMMIT" \
+            -f object="$GITHUB_SHA" \
+            -f type=commit \
+            --jq .sha)
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" \
+            -f sha="$tag_object_sha"
