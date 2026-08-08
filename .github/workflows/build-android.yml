@@ -66,11 +66,11 @@ jobs:
 
       - name: Resolve dependencies
         working-directory: source/example
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Build APK
         working-directory: source/example
-        run: flutter build apk --${{ inputs.build_mode }}
+        run: flutter build apk --${{ inputs.build_mode }} --no-pub
 
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
