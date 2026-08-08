@@ -112,6 +112,22 @@ jobs:
           --build-name "$RELEASE_VERSION"
           --build-number "$GITHUB_RUN_NUMBER"
 
+      - name: Verify embedded APK version
+        env:
+          BUILD_MODE: ${{ inputs.build_mode }}
+        run: |
+          apk="source/example/build/app/outputs/flutter-apk/app-$BUILD_MODE.apk"
+          package_info=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | head -n 1)
+          echo "$package_info"
+          if [[ "$package_info" != *"versionCode='$GITHUB_RUN_NUMBER'"* ]]; then
+            echo "::error::APK versionCode does not match Actions run number $GITHUB_RUN_NUMBER"
+            exit 1
+          fi
+          if [[ "$package_info" != *"versionName='$RELEASE_VERSION'"* ]]; then
+            echo "::error::APK versionName does not match release version $RELEASE_VERSION"
+            exit 1
+          fi
+
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
