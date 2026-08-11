@@ -179,14 +179,14 @@ jobs:
             --content-type application/vnd.android.package-archive \
             --cache-control "public, max-age=31536000, immutable" \
             --metadata "version=$RELEASE_VERSION" \
-            --metadata "build_code=$GITHUB_RUN_NUMBER" \
-            --metadata "source_commit=$SOURCE_COMMIT"
+            --metadata "build-code=$GITHUB_RUN_NUMBER" \
+            --metadata "source-commit=$SOURCE_COMMIT"
           ossutil cp "$apk" "$latest_object" --force \
             --content-type application/vnd.android.package-archive \
             --cache-control "no-cache, no-store, must-revalidate" \
             --metadata "version=$RELEASE_VERSION" \
-            --metadata "build_code=$GITHUB_RUN_NUMBER" \
-            --metadata "source_commit=$SOURCE_COMMIT"
+            --metadata "build-code=$GITHUB_RUN_NUMBER" \
+            --metadata "source-commit=$SOURCE_COMMIT"
           ossutil stat "$latest_object"
 
       - name: Tag published release
