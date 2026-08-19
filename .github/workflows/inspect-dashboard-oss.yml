@@ -53,6 +53,17 @@ jobs:
           set -euo pipefail
           ossutil ls oss://quic-console-ota/dashboard/ --recursive
 
+      - name: List Android release objects
+        env:
+          OSS_REGION: cn-shanghai
+          OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+        run: |
+          set -euo pipefail
+          echo '--- legacy release/ ---'
+          ossutil ls oss://quic-console-ota/release/ --recursive
+          echo '--- dashboard-android/ ---'
+          ossutil ls oss://quic-console-ota/dashboard-android/ --recursive
+
       - name: Read and validate latest.json
         env:
           OSS_REGION: cn-shanghai
