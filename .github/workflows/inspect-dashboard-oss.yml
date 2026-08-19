@@ -63,6 +63,9 @@ jobs:
           ossutil ls oss://quic-console-ota/release/ --recursive
           echo '--- dashboard-android/ ---'
           ossutil ls oss://quic-console-ota/dashboard-android/ --recursive
+          echo '--- latest Android APK metadata ---'
+          ossutil stat oss://quic-console-ota/release/versions/v0.0.33/app-release.apk \
+            --output-format json
 
       - name: Read and validate latest.json
         env:
