@@ -1,6 +1,6 @@
-name: Inspect Dashboard OSS
+name: Inspect Dashboard OSS Releases
 
-run-name: Inspect oss://quic-console-ota/dashboard/
+run-name: Inspect dashboard and dashboard-android OSS releases
 
 on:
   workflow_dispatch:
@@ -63,9 +63,8 @@ jobs:
           ossutil ls oss://quic-console-ota/release/ --recursive
           echo '--- dashboard-android/ ---'
           ossutil ls oss://quic-console-ota/dashboard-android/ --recursive
-          echo '--- latest Android APK metadata ---'
-          ossutil stat oss://quic-console-ota/release/versions/v0.0.33/app-release.apk \
-            --output-format json
+          echo '--- legacy release/versions/ (expected empty) ---'
+          ossutil ls oss://quic-console-ota/release/versions/ --recursive
 
       - name: Read and validate latest.json
         env:
@@ -76,4 +75,15 @@ jobs:
           latest_json="$RUNNER_TEMP/dashboard-latest.json"
           ossutil cp oss://quic-console-ota/dashboard/release/latest.json "$latest_json" --force
           echo '--- dashboard/release/latest.json ---'
+          jq . "$latest_json"
+
+      - name: Read and validate Android latest.json
+        env:
+          OSS_REGION: cn-shanghai
+          OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+        run: |
+          set -euo pipefail
+          latest_json="$RUNNER_TEMP/dashboard-android-latest.json"
+          ossutil cp oss://quic-console-ota/dashboard-android/release/latest.json "$latest_json" --force
+          echo '--- dashboard-android/release/latest.json ---'
           jq . "$latest_json"
