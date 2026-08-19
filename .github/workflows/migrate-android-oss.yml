@@ -65,6 +65,10 @@ jobs:
           destination_prefix="oss://quic-console-ota/dashboard-android/release/versions/"
           latest_manifest_object="oss://quic-console-ota/dashboard-android/release/latest.json"
 
+          stat_json() {
+            ossutil stat "$1" --output-format json | sed -n '/^{/,/^}/p'
+          }
+
           source_listing=$(ossutil ls "$source_prefix" --recursive)
           printf '%s\n' "$source_listing"
           mapfile -t source_objects < <(
@@ -90,8 +94,8 @@ jobs:
 
             source_stat="$RUNNER_TEMP/source-${version_tag}.json"
             destination_stat="$RUNNER_TEMP/destination-${version_tag}.json"
-            ossutil stat "$source_object" --output-format json > "$source_stat"
-            ossutil stat "$destination_object" --output-format json > "$destination_stat"
+            stat_json "$source_object" > "$source_stat"
+            stat_json "$destination_object" > "$destination_stat"
             for property in Content-Length Content-Md5; do
               source_value=$(jq -r --arg property "$property" '.[$property]' "$source_stat")
               destination_value=$(jq -r --arg property "$property" '.[$property]' "$destination_stat")
