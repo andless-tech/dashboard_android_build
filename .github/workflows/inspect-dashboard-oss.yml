@@ -60,6 +60,6 @@ jobs:
         run: |
           set -euo pipefail
           latest_json="$RUNNER_TEMP/dashboard-latest.json"
-          ossutil cp oss://quic-console-ota/dashboard/latest.json "$latest_json" --force
-          echo '--- dashboard/latest.json ---'
+          ossutil cp oss://quic-console-ota/dashboard/release/latest.json "$latest_json" --force
+          echo '--- dashboard/release/latest.json ---'
           jq . "$latest_json"
