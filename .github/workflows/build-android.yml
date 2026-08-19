@@ -169,25 +169,58 @@ jobs:
           OSS_REGION: cn-shanghai
           OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
         run: |
+          set -euo pipefail
           apk="source/example/build/app/outputs/flutter-apk/app-release.apk"
-          versioned_object="oss://quic-console-ota/release/versions/$RELEASE_TAG/app-release.apk"
-          latest_object="oss://quic-console-ota/release/latest/app-release.apk"
+          versioned_key="dashboard-android/release/versions/$RELEASE_TAG/app-release.apk"
+          versioned_object="oss://quic-console-ota/$versioned_key"
+          latest_manifest="oss://quic-console-ota/dashboard-android/release/latest.json"
+          manifest="$RUNNER_TEMP/dashboard-android-latest.json"
 
           test -f "$apk"
-          sha256sum "$apk"
+          apk_sha256=$(sha256sum "$apk" | awk '{print $1}')
+          apk_size=$(stat -c '%s' "$apk")
+          build_time=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          echo "$apk_sha256  $apk"
+
           ossutil cp "$apk" "$versioned_object" --force \
             --content-type application/vnd.android.package-archive \
             --cache-control "public, max-age=31536000, immutable" \
             --metadata "version=$RELEASE_VERSION" \
             --metadata "build-code=$GITHUB_RUN_NUMBER" \
             --metadata "source-commit=$SOURCE_COMMIT"
-          ossutil cp "$apk" "$latest_object" --force \
-            --content-type application/vnd.android.package-archive \
-            --cache-control "no-cache, no-store, must-revalidate" \
-            --metadata "version=$RELEASE_VERSION" \
-            --metadata "build-code=$GITHUB_RUN_NUMBER" \
-            --metadata "source-commit=$SOURCE_COMMIT"
-          ossutil stat "$latest_object"
+
+          jq -n \
+            --arg version "$RELEASE_VERSION" \
+            --arg commit "$SOURCE_COMMIT" \
+            --arg build_time "$build_time" \
+            --arg filename "app-release.apk" \
+            --arg object_key "$versioned_key" \
+            --arg sha256 "$apk_sha256" \
+            --argjson size "$apk_size" \
+            '{
+              schema_version: 2,
+              app: "dashboard-android",
+              channel: "release",
+              version: $version,
+              commit: $commit,
+              build_time: $build_time,
+              force: false,
+              artifacts: {
+                android: {
+                  filename: $filename,
+                  object_key: $object_key,
+                  sha256: $sha256,
+                  size: $size
+                }
+              }
+            }' > "$manifest"
+
+          jq . "$manifest"
+          ossutil cp "$manifest" "$latest_manifest" --force \
+            --content-type application/json \
+            --cache-control "no-cache, no-store, must-revalidate"
+          ossutil stat "$versioned_object"
+          ossutil stat "$latest_manifest"
 
       - name: Tag published release
         if: inputs.build_mode == 'release'
