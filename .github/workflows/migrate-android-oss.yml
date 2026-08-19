@@ -89,13 +89,19 @@ jobs:
             version_tag="${BASH_REMATCH[1]}"
             versions+=("$version_tag")
             destination_object="${source_object/$source_prefix/$destination_prefix}"
-            echo "Copying $source_object -> $destination_object"
-            ossutil cp "$source_object" "$destination_object" --force
-
             source_stat="$RUNNER_TEMP/source-${version_tag}.json"
             destination_stat="$RUNNER_TEMP/destination-${version_tag}.json"
             stat_json "$source_object" > "$source_stat"
-            stat_json "$destination_object" > "$destination_stat"
+            if stat_json "$destination_object" > "$destination_stat" 2>/dev/null \
+              && [[ -s "$destination_stat" ]] \
+              && [[ "$(jq -r '."Content-Length"' "$source_stat")" == "$(jq -r '."Content-Length"' "$destination_stat")" ]] \
+              && [[ "$(jq -r '."Content-Md5"' "$source_stat")" == "$(jq -r '."Content-Md5"' "$destination_stat")" ]]; then
+              echo "Already copied and verified: $destination_object"
+            else
+              echo "Copying $source_object -> $destination_object"
+              ossutil cp "$source_object" "$destination_object" --force
+              stat_json "$destination_object" > "$destination_stat"
+            fi
             for property in Content-Length Content-Md5; do
               source_value=$(jq -r --arg property "$property" '.[$property]' "$source_stat")
               destination_value=$(jq -r --arg property "$property" '.[$property]' "$destination_stat")
@@ -119,7 +125,12 @@ jobs:
           apk_size=$(stat -c '%s' "$latest_apk")
           source_commit=$(jq -r '."X-Oss-Meta-Source-Commit" // ""' "$latest_stat")
           last_modified=$(jq -r '."Last-Modified"' "$latest_stat")
-          build_time=$(date -u -d "$last_modified" '+%Y-%m-%dT%H:%M:%SZ')
+          if [[ ! "$last_modified" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}\ \+0000\ UTC$ ]]; then
+            echo "::error::Unexpected Last-Modified format: $last_modified"
+            exit 1
+          fi
+          build_time="${last_modified:0:19}"
+          build_time="${build_time/ /T}Z"
 
           jq -n \
             --arg version "$latest_version" \
