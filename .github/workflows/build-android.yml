@@ -173,8 +173,9 @@ jobs:
           apk="source/example/build/app/outputs/flutter-apk/app-release.apk"
           versioned_key="dashboard-android/release/versions/$RELEASE_TAG/app-release.apk"
           versioned_object="oss://quic-console-ota/$versioned_key"
+          versioned_manifest="oss://quic-console-ota/dashboard-android/release/versions/$RELEASE_TAG/manifest.json"
           latest_manifest="oss://quic-console-ota/dashboard-android/release/latest.json"
-          manifest="$RUNNER_TEMP/dashboard-android-latest.json"
+          manifest="$RUNNER_TEMP/dashboard-android-manifest.json"
 
           test -f "$apk"
           apk_sha256=$(sha256sum "$apk" | awk '{print $1}')
@@ -216,10 +217,14 @@ jobs:
             }' > "$manifest"
 
           jq . "$manifest"
+          ossutil cp "$manifest" "$versioned_manifest" --force \
+            --content-type application/json \
+            --cache-control "public, max-age=31536000, immutable"
           ossutil cp "$manifest" "$latest_manifest" --force \
             --content-type application/json \
             --cache-control "no-cache, no-store, must-revalidate"
           ossutil stat "$versioned_object"
+          ossutil stat "$versioned_manifest"
           ossutil stat "$latest_manifest"
 
       - name: Tag published release

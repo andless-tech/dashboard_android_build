@@ -1,0 +1,166 @@
+name: Backfill Android Version Manifests
+
+run-name: Backfill dashboard-android version manifests
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type BACKFILL_ANDROID_MANIFESTS to continue
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Validate confirmation and OSS credentials
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRMATION" != "BACKFILL_ANDROID_MANIFESTS" ]]; then
+            echo "::error::confirmation must be BACKFILL_ANDROID_MANIFESTS"
+            exit 1
+          fi
+          clean_access_key_id=$(printf '%s' "$OSS_ACCESS_KEY_ID" | tr -d '[:space:]')
+          clean_access_key_secret=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | tr -d '[:space:]')
+          if [[ -z "$clean_access_key_id" || -z "$clean_access_key_secret" ]]; then
+            echo "::error::OSS credentials are not configured"
+            exit 1
+          fi
+          echo "::add-mask::$clean_access_key_id"
+          echo "::add-mask::$clean_access_key_secret"
+          echo "OSS_ACCESS_KEY_ID=$clean_access_key_id" >> "$GITHUB_ENV"
+          echo "OSS_ACCESS_KEY_SECRET=$clean_access_key_secret" >> "$GITHUB_ENV"
+
+      - name: Install ossutil
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/ossutil-2.3.0-linux-amd64.zip"
+          install_dir="$RUNNER_TEMP/ossutil-bin"
+          curl --fail --location --retry 3 --output "$archive" \
+            https://gosspublic.alicdn.com/ossutil/v2/2.3.0/ossutil-2.3.0-linux-amd64.zip
+          echo "3ae4d9fc85a7a6e9f5654d1599766f1a3a42a3692870887b5ae9338d582ef65a  $archive" \
+            | sha256sum --check
+          mkdir -p "$install_dir"
+          unzip -q "$archive" -d "$install_dir"
+          chmod 755 "$install_dir/ossutil-2.3.0-linux-amd64/ossutil"
+          echo "$install_dir/ossutil-2.3.0-linux-amd64" >> "$GITHUB_PATH"
+
+      - name: Generate and upload manifests
+        env:
+          OSS_REGION: cn-shanghai
+          OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+        run: |
+          set -euo pipefail
+          bucket="quic-console-ota"
+          prefix="oss://$bucket/dashboard-android/release/versions/"
+
+          stat_json() {
+            ossutil stat "$1" --output-format json | sed -n '/^{/,/^}/p'
+          }
+
+          listing=$(ossutil ls "$prefix" --recursive)
+          printf '%s\n' "$listing"
+          mapfile -t apk_objects < <(
+            printf '%s\n' "$listing" \
+              | awk '$NF ~ /^oss:\/\// && $NF ~ /\/app-release\.apk$/ {print $NF}' \
+              | sort -V
+          )
+          if (( ${#apk_objects[@]} == 0 )); then
+            echo "::error::No versioned Android APKs found"
+            exit 1
+          fi
+
+          apk="$RUNNER_TEMP/app-release.apk"
+          stat_file="$RUNNER_TEMP/apk-stat.json"
+          manifest="$RUNNER_TEMP/manifest.json"
+          verified=0
+
+          for apk_object in "${apk_objects[@]}"; do
+            if [[ ! "$apk_object" =~ ^oss://$bucket/dashboard-android/release/versions/(v[0-9]+\.[0-9]+\.[0-9]+)/app-release\.apk$ ]]; then
+              echo "::error::Unexpected APK object: $apk_object"
+              exit 1
+            fi
+
+            version_tag="${BASH_REMATCH[1]}"
+            version="${version_tag#v}"
+            object_key="${apk_object#oss://$bucket/}"
+            manifest_object="${apk_object%/app-release.apk}/manifest.json"
+
+            stat_json "$apk_object" > "$stat_file"
+            source_commit=$(jq -r '."X-Oss-Meta-Source-Commit" // ""' "$stat_file")
+            last_modified=$(jq -r '."Last-Modified" // ""' "$stat_file")
+            expected_size=$(jq -r '."Content-Length" // ""' "$stat_file")
+            if [[ ! "$source_commit" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Missing source commit metadata for $apk_object"
+              exit 1
+            fi
+            if [[ ! "$last_modified" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}\ \+0000\ UTC$ ]]; then
+              echo "::error::Unexpected Last-Modified for $apk_object: $last_modified"
+              exit 1
+            fi
+            build_time="${last_modified:0:19}"
+            build_time="${build_time/ /T}Z"
+
+            ossutil cp "$apk_object" "$apk" --force
+            apk_size=$(stat -c '%s' "$apk")
+            if [[ "$apk_size" != "$expected_size" ]]; then
+              echo "::error::Downloaded size mismatch for $apk_object"
+              exit 1
+            fi
+            apk_sha256=$(sha256sum "$apk" | awk '{print $1}')
+
+            jq -n \
+              --arg version "$version" \
+              --arg commit "$source_commit" \
+              --arg build_time "$build_time" \
+              --arg object_key "$object_key" \
+              --arg sha256 "$apk_sha256" \
+              --argjson size "$apk_size" \
+              '{
+                schema_version: 2,
+                app: "dashboard-android",
+                channel: "release",
+                version: $version,
+                commit: $commit,
+                build_time: $build_time,
+                force: false,
+                artifacts: {
+                  android: {
+                    filename: "app-release.apk",
+                    object_key: $object_key,
+                    sha256: $sha256,
+                    size: $size
+                  }
+                }
+              }' > "$manifest"
+
+            jq . "$manifest"
+            ossutil cp "$manifest" "$manifest_object" --force \
+              --content-type application/json \
+              --cache-control "public, max-age=31536000, immutable"
+            downloaded_manifest="$RUNNER_TEMP/downloaded-${version_tag}.json"
+            ossutil cp "$manifest_object" "$downloaded_manifest" --force
+            cmp "$manifest" "$downloaded_manifest"
+            verified=$((verified + 1))
+          done
+
+          manifest_listing=$(ossutil ls "$prefix" --recursive)
+          manifest_count=$(
+            printf '%s\n' "$manifest_listing" \
+              | awk '$NF ~ /^oss:\/\// && $NF ~ /\/manifest\.json$/ {count++} END {print count + 0}'
+          )
+          if (( manifest_count != ${#apk_objects[@]} || verified != ${#apk_objects[@]} )); then
+            echo "::error::Manifest verification count mismatch: APKs=${#apk_objects[@]} manifests=$manifest_count verified=$verified"
+            exit 1
+          fi
+          echo "Backfilled and verified $verified Android version manifests"

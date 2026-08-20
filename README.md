@@ -19,9 +19,14 @@ monotonically increasing Actions run number as Android `versionCode`. After a
 successful release build, the workflow:
 
 - uploads an immutable copy to
-  `oss://quic-console-ota/release/versions/vMAJOR.MINOR.PATCH/app-release.apk`;
-- replaces `oss://quic-console-ota/release/latest/app-release.apk`;
+  `oss://quic-console-ota/dashboard-android/release/versions/vMAJOR.MINOR.PATCH/app-release.apk`;
+- writes the matching immutable `manifest.json` beside the versioned APK;
+- replaces `oss://quic-console-ota/dashboard-android/release/latest.json`;
 - creates the matching version Tag in this build repository.
+
+The maintenance workflow **Backfill Android Version Manifests** regenerates and
+verifies `manifest.json` for every existing APK under
+`dashboard-android/release/versions/`.
 
 The OSS upload requires the repository Actions secrets `OSS_ACCESS_KEY_ID` and
 `OSS_ACCESS_KEY_SECRET`. The associated RAM identity should only have the OSS
