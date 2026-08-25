@@ -139,11 +139,16 @@ jobs:
           --build-name "$RELEASE_VERSION"
           --build-number "$GITHUB_RUN_NUMBER"
 
-      - name: Verify embedded APK version
+      - name: Rename APK
         env:
           BUILD_MODE: ${{ inputs.build_mode }}
+        run: >-
+          mv "source/example/build/app/outputs/flutter-apk/app-$BUILD_MODE.apk"
+          "source/example/build/app/outputs/flutter-apk/andless_dashboard.apk"
+
+      - name: Verify embedded APK version
         run: |
-          apk="source/example/build/app/outputs/flutter-apk/app-$BUILD_MODE.apk"
+          apk="source/example/build/app/outputs/flutter-apk/andless_dashboard.apk"
           package_info=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | head -n 1)
           echo "$package_info"
           if [[ "$package_info" != *"versionCode='$GITHUB_RUN_NUMBER'"* ]]; then
@@ -159,7 +164,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dashboard-android-${{ env.RELEASE_TAG }}-${{ inputs.build_mode }}
-          path: source/example/build/app/outputs/flutter-apk/app-${{ inputs.build_mode }}.apk
+          path: source/example/build/app/outputs/flutter-apk/andless_dashboard.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -170,8 +175,8 @@ jobs:
           OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
         run: |
           set -euo pipefail
-          apk="source/example/build/app/outputs/flutter-apk/app-release.apk"
-          versioned_key="dashboard-android/release/versions/$RELEASE_TAG/app-release.apk"
+          apk="source/example/build/app/outputs/flutter-apk/andless_dashboard.apk"
+          versioned_key="dashboard-android/release/versions/$RELEASE_TAG/andless_dashboard.apk"
           versioned_object="oss://quic-console-ota/$versioned_key"
           versioned_manifest="oss://quic-console-ota/dashboard-android/release/versions/$RELEASE_TAG/manifest.json"
           latest_manifest="oss://quic-console-ota/dashboard-android/release/latest.json"
@@ -194,7 +199,7 @@ jobs:
             --arg version "$RELEASE_VERSION" \
             --arg commit "$SOURCE_COMMIT" \
             --arg build_time "$build_time" \
-            --arg filename "app-release.apk" \
+            --arg filename "andless_dashboard.apk" \
             --arg object_key "$versioned_key" \
             --arg sha256 "$apk_sha256" \
             --argjson size "$apk_size" \

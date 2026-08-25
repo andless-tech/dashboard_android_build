@@ -19,7 +19,7 @@ monotonically increasing Actions run number as Android `versionCode`. After a
 successful release build, the workflow:
 
 - uploads an immutable copy to
-  `oss://quic-console-ota/dashboard-android/release/versions/vMAJOR.MINOR.PATCH/app-release.apk`;
+  `oss://quic-console-ota/dashboard-android/release/versions/vMAJOR.MINOR.PATCH/andless_dashboard.apk`;
 - writes the matching immutable `manifest.json` beside the versioned APK;
 - replaces `oss://quic-console-ota/dashboard-android/release/latest.json`;
 - creates the matching version Tag in this build repository.

@@ -72,7 +72,7 @@ jobs:
           printf '%s\n' "$listing"
           mapfile -t apk_objects < <(
             printf '%s\n' "$listing" \
-              | awk '$NF ~ /^oss:\/\// && $NF ~ /\/app-release\.apk$/ {print $NF}' \
+              | awk '$NF ~ /^oss:\/\// && $NF ~ /\/(app-release|andless_dashboard)\.apk$/ {print $NF}' \
               | sort -V
           )
           if (( ${#apk_objects[@]} == 0 )); then
@@ -80,21 +80,22 @@ jobs:
             exit 1
           fi
 
-          apk="$RUNNER_TEMP/app-release.apk"
+          apk="$RUNNER_TEMP/android-release.apk"
           stat_file="$RUNNER_TEMP/apk-stat.json"
           manifest="$RUNNER_TEMP/manifest.json"
           verified=0
 
           for apk_object in "${apk_objects[@]}"; do
-            if [[ ! "$apk_object" =~ ^oss://$bucket/dashboard-android/release/versions/(v[0-9]+\.[0-9]+\.[0-9]+)/app-release\.apk$ ]]; then
+            if [[ ! "$apk_object" =~ ^oss://$bucket/dashboard-android/release/versions/(v[0-9]+\.[0-9]+\.[0-9]+)/(app-release|andless_dashboard)\.apk$ ]]; then
               echo "::error::Unexpected APK object: $apk_object"
               exit 1
             fi
 
             version_tag="${BASH_REMATCH[1]}"
+            apk_filename="${BASH_REMATCH[2]}.apk"
             version="${version_tag#v}"
             object_key="${apk_object#oss://$bucket/}"
-            manifest_object="${apk_object%/app-release.apk}/manifest.json"
+            manifest_object="${apk_object%/*}/manifest.json"
 
             stat_json "$apk_object" > "$stat_file"
             source_commit=$(jq -r '."X-Oss-Meta-Source-Commit" // ""' "$stat_file")
@@ -123,6 +124,7 @@ jobs:
               --arg version "$version" \
               --arg commit "$source_commit" \
               --arg build_time "$build_time" \
+              --arg filename "$apk_filename" \
               --arg object_key "$object_key" \
               --arg sha256 "$apk_sha256" \
               --argjson size "$apk_size" \
@@ -136,7 +138,7 @@ jobs:
                 force: false,
                 artifacts: {
                   android: {
-                    filename: "app-release.apk",
+                    filename: $filename,
                     object_key: $object_key,
                     sha256: $sha256,
                     size: $size
