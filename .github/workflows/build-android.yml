@@ -43,6 +43,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [[ ! "$INPUT_VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::version_tag must match vMAJOR.MINOR.PATCH, for example v0.0.27"
@@ -57,6 +61,11 @@ jobs:
             clean_access_key_secret=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | tr -d '[:space:]')
             if [[ -z "$clean_access_key_id" || -z "$clean_access_key_secret" ]]; then
               echo "::error::OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must be configured as Actions secrets"
+              exit 1
+            fi
+            if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || \
+                  -z "$ANDROID_KEY_ALIAS" || -z "$ANDROID_KEY_PASSWORD" ]]; then
+              echo "::error::Android release signing secrets are not fully configured"
               exit 1
             fi
             echo "::add-mask::$clean_access_key_id"
@@ -111,6 +120,21 @@ jobs:
           java-version: "21"
           cache: gradle
 
+      - name: Prepare Android release signing
+        if: inputs.build_mode == 'release'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/andless-dashboard-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          keytool -list -keystore "$keystore" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" >/dev/null
+
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -134,6 +158,10 @@ jobs:
         working-directory: source/example
         env:
           BUILD_MODE: ${{ inputs.build_mode }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/andless-dashboard-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: >-
           flutter build apk --"$BUILD_MODE" --no-pub
           --build-name "$RELEASE_VERSION"
@@ -159,6 +187,27 @@ jobs:
             echo "::error::APK versionName does not match release version $RELEASE_VERSION"
             exit 1
           fi
+
+      - name: Verify release signing certificate
+        if: inputs.build_mode == 'release'
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          apk="source/example/build/app/outputs/flutter-apk/andless_dashboard.apk"
+          keystore="$RUNNER_TEMP/andless-dashboard-release.jks"
+          expected_digest=$(keytool -exportcert -keystore "$keystore" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" | sha256sum | awk '{print $1}')
+          actual_digest=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" \
+            verify --print-certs "$apk" | \
+            sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)
+          if [[ -z "$actual_digest" || "$actual_digest" != "$expected_digest" ]]; then
+            echo "::error::APK signing certificate does not match the configured release keystore"
+            exit 1
+          fi
+          echo "Verified release signing certificate SHA-256: $actual_digest"
 
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
