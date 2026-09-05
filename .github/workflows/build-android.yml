@@ -22,6 +22,11 @@ on:
         options:
           - release
           - debug
+      native_ref:
+        description: Optional quic_mobile_native_library commit from Gitee
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -149,6 +154,25 @@ jobs:
           "build-tools;36.0.0"
           "cmake;3.22.1"
           "ndk;28.2.13676358"
+
+      - name: Build native QUIC client
+        if: inputs.native_ref != ''
+        env:
+          NATIVE_REF: ${{ inputs.native_ref }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://gitee.com/endless-tech/quic_mobile_native_library.git native
+          git -C native checkout --detach "$NATIVE_REF"
+          cmake -S native -B native/build/ci \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24
+          cmake --build native/build/ci --parallel 2
+          install -m 0755 native/build/ci/libquic_client.so \
+            source/android/src/main/jniLibs/arm64-v8a/libquic_client.so
+          install -m 0755 native/build/ci/libquic_client.so \
+            source/quic/libquic_client.so
+          sha256sum source/android/src/main/jniLibs/arm64-v8a/libquic_client.so
 
       - name: Resolve dependencies
         working-directory: source/example
