@@ -174,6 +174,11 @@ jobs:
           mv "source/example/build/app/outputs/flutter-apk/app-$BUILD_MODE.apk"
           "source/example/build/app/outputs/flutter-apk/andless_dashboard.apk"
 
+      - name: Verify diagnostic export key material
+        run: >-
+          python3 source/tool/verify_diagnostic_apk.py
+          source/example/build/app/outputs/flutter-apk/andless_dashboard.apk
+
       - name: Verify embedded APK version
         run: |
           apk="source/example/build/app/outputs/flutter-apk/andless_dashboard.apk"
