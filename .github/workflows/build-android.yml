@@ -154,6 +154,10 @@ jobs:
         working-directory: source/example
         run: flutter pub get --enforce-lockfile
 
+      - name: Test video configuration routing
+        working-directory: source/example
+        run: flutter test --no-pub ../test/device_video_config_test.dart
+
       - name: Build APK
         working-directory: source/example
         env:
