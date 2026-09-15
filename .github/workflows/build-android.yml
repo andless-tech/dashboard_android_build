@@ -22,6 +22,11 @@ on:
         options:
           - release
           - debug
+      force_update:
+        description: Require users on older versions to update
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -261,6 +266,7 @@ jobs:
             --arg object_key "$versioned_key" \
             --arg sha256 "$apk_sha256" \
             --argjson size "$apk_size" \
+            --argjson force "${{ inputs.force_update }}" \
             '{
               schema_version: 2,
               app: "dashboard-android",
@@ -268,7 +274,7 @@ jobs:
               version: $version,
               commit: $commit,
               build_time: $build_time,
-              force: false,
+              force: $force,
               artifacts: {
                 android: {
                   filename: $filename,

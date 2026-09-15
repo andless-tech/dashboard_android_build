@@ -11,7 +11,8 @@ repository.
 3. Click **Run workflow**.
 4. Enter a source branch, tag, or commit (the default is `main`).
 5. Enter a version Tag in `vMAJOR.MINOR.PATCH` format, such as `v0.0.27`, and
-   choose `release` or `debug`.
+   choose `release` or `debug`. Enable `force_update` only when older app
+   versions must be blocked until this release is installed.
 6. When the job finishes, download the APK from the run's **Artifacts** section.
 
 Release builds embed `MAJOR.MINOR.PATCH` as Android `versionName` and use the
