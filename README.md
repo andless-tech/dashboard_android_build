@@ -25,6 +25,9 @@ successful release build, the workflow:
 - replaces `oss://quic-console-ota/dashboard-android/release/latest.json`;
 - creates the matching version Tag in this build repository.
 
+The release manifest declares `andless-pro` / `spi-nand-128m` firmware
+`1.0.13` as the minimum version compatible with this App release.
+
 The maintenance workflow **Backfill Android Version Manifests** regenerates and
 verifies `manifest.json` for every existing APK under
 `dashboard-android/release/versions/`.
