@@ -52,6 +52,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          DJI_APP_KEY: ${{ secrets.DJI_APP_KEY }}
         run: |
           if [[ ! "$INPUT_VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::version_tag must match vMAJOR.MINOR.PATCH, for example v0.0.27"
@@ -62,6 +63,10 @@ jobs:
           echo "RELEASE_VERSION=${INPUT_VERSION_TAG#v}" >> "$GITHUB_ENV"
 
           if [[ "$BUILD_MODE" == "release" ]]; then
+            if [[ -z "$DJI_APP_KEY" ]]; then
+              echo "::error::DJI_APP_KEY must be configured before publishing MSDK-enabled releases"
+              exit 1
+            fi
             clean_access_key_id=$(printf '%s' "$OSS_ACCESS_KEY_ID" | tr -d '[:space:]')
             clean_access_key_secret=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | tr -d '[:space:]')
             if [[ -z "$clean_access_key_id" || -z "$clean_access_key_secret" ]]; then
@@ -163,6 +168,23 @@ jobs:
         working-directory: source/example
         run: flutter test --no-pub ../test/device_video_config_test.dart
 
+      - name: Test input sources and channel settings
+        working-directory: source/example
+        run: |
+          flutter test --no-pub \
+            ../test/dji_input_test.dart ../test/dji_input_settings_test.dart \
+            ../test/dji_input_detected_dialog_test.dart ../test/gamepad_input_test.dart \
+            ../test/gamepad_sources_test.dart ../test/channel_input_sources_test.dart \
+            ../test/channel_settings_test.dart ../test/channel_output_meter_test.dart \
+            ../test/joystick_input_test.dart ../test/phone_tilt_input_test.dart \
+            ../test/pwm_wire_test.dart ../test/device_removal_test.dart ../test/qr_no_camera_test.dart
+
+      - name: Check optional SDK device gate and video lifecycle
+        working-directory: source
+        run: |
+          python3 tool/check_dji_device_support.py
+          python3 tool/check_video_lifecycle.py
+
       - name: Build APK
         working-directory: source/example
         env:
@@ -171,8 +193,10 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          DJI_APP_KEY: ${{ secrets.DJI_APP_KEY }}
         run: >-
           flutter build apk --"$BUILD_MODE" --no-pub
+          --target-platform android-arm64
           --build-name "$RELEASE_VERSION"
           --build-number "$GITHUB_RUN_NUMBER"
 
@@ -186,6 +210,11 @@ jobs:
       - name: Verify diagnostic export key material
         run: >-
           python3 source/tool/verify_diagnostic_apk.py
+          source/example/build/app/outputs/flutter-apk/andless_dashboard.apk
+
+      - name: Verify DJI native runtime
+        run: >-
+          python3 source/tool/verify_dji_apk.py
           source/example/build/app/outputs/flutter-apk/andless_dashboard.apk
 
       - name: Verify embedded APK version

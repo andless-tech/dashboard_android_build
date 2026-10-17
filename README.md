@@ -36,6 +36,12 @@ The OSS upload requires the repository Actions secrets `OSS_ACCESS_KEY_ID` and
 `OSS_ACCESS_KEY_SECRET`. The associated RAM identity should only have the OSS
 permissions needed to write the two `release/` object prefixes.
 
+MSDK-enabled builds also require `DJI_APP_KEY` as an Actions secret registered for
+the Android application ID `com.andless.dashboard`. The workflow injects it only
+at build time, runs input-source and device-gate checks, and verifies the final
+APK contains the matching DJI native runtime. Never commit this key to source.
+Release builds retain normal OTA checks and default to optional updates.
+
 The workflow can only read the private source repository through a dedicated
 read-only deploy key. It does not publish source code or commit build outputs to
 this repository. Build artifacts are retained for 14 days.
