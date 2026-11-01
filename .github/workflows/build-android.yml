@@ -185,6 +185,13 @@ jobs:
           python3 tool/check_dji_device_support.py
           python3 tool/check_video_lifecycle.py
 
+      - name: Test optional firmware release notices
+        working-directory: source/example
+        run: |
+          if [ -f ../test/firmware_release_test.dart ]; then
+            flutter test --no-pub ../test/firmware_release_test.dart
+          fi
+
       - name: Build APK
         working-directory: source/example
         env:
