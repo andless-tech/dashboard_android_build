@@ -88,6 +88,21 @@ jobs:
             fi
           fi
 
+      - name: Read canonical release notes
+        if: inputs.build_mode == 'release'
+        env:
+          FORCE_UPDATE: ${{ inputs.force_update }}
+        run: |
+          set -euo pipefail
+          notes_url="https://www.andless.tech/changelog/android/$RELEASE_VERSION/"
+          curl --fail --silent --show-error --proto '=https' --max-time 30 --retry 2 \
+            "${notes_url}metadata.json" --output "$RUNNER_TEMP/release-notes.json"
+          jq -se --arg version "$RELEASE_VERSION" --arg url "$notes_url" --argjson force "$FORCE_UPDATE" '
+            length == 1 and (.[0] | .app == "dashboard-android" and .channel == "release" and .version == $version and
+            .release_notes_url == $url and .force == $force and
+            (.changelog | type == "string" and length > 0 and utf8bytelength <= 16000))
+          ' "$RUNNER_TEMP/release-notes.json" >/dev/null
+
       - name: Install ossutil
         if: inputs.build_mode == 'release'
         run: |
@@ -190,6 +205,9 @@ jobs:
         run: |
           if [ -f ../test/firmware_release_test.dart ]; then
             flutter test --no-pub ../test/firmware_release_test.dart
+          fi
+          if [ -f ../test/update_dialog_test.dart ]; then
+            flutter test --no-pub ../test/update_test.dart ../test/update_dialog_test.dart ../test/control_plane_test.dart
           fi
 
       - name: Build APK
@@ -295,6 +313,7 @@ jobs:
             --metadata "source-commit=$SOURCE_COMMIT"
 
           jq -n \
+            --slurpfile release_notes "$RUNNER_TEMP/release-notes.json" \
             --arg version "$RELEASE_VERSION" \
             --arg commit "$SOURCE_COMMIT" \
             --arg build_time "$build_time" \
@@ -311,6 +330,8 @@ jobs:
               commit: $commit,
               build_time: $build_time,
               force: $force,
+              changelog: $release_notes[0].changelog,
+              release_notes_url: $release_notes[0].release_notes_url,
               device_requirements: {
                 product: "andless-pro",
                 variant: "spi-nand-128m",
