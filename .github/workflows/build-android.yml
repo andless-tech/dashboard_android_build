@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK (signed artifact only)
 
 run-name: Build ${{ inputs.version_tag }} from ${{ inputs.source_ref }} (${{ inputs.build_mode }})
 
@@ -29,7 +29,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-${{ inputs.version_tag }}-${{ inputs.build_mode }}
@@ -43,11 +43,9 @@ jobs:
     steps:
       - name: Validate release inputs
         env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.source_ref }}
           INPUT_VERSION_TAG: ${{ inputs.version_tag }}
           BUILD_MODE: ${{ inputs.build_mode }}
-          GH_TOKEN: ${{ github.token }}
-          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -64,13 +62,7 @@ jobs:
 
           if [[ "$BUILD_MODE" == "release" ]]; then
             if [[ -z "$DJI_APP_KEY" ]]; then
-              echo "::error::DJI_APP_KEY must be configured before publishing MSDK-enabled releases"
-              exit 1
-            fi
-            clean_access_key_id=$(printf '%s' "$OSS_ACCESS_KEY_ID" | tr -d '[:space:]')
-            clean_access_key_secret=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | tr -d '[:space:]')
-            if [[ -z "$clean_access_key_id" || -z "$clean_access_key_secret" ]]; then
-              echo "::error::OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must be configured as Actions secrets"
+              echo "::error::DJI_APP_KEY must be configured for MSDK-enabled Release builds"
               exit 1
             fi
             if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || \
@@ -78,51 +70,11 @@ jobs:
               echo "::error::Android release signing secrets are not fully configured"
               exit 1
             fi
-            echo "::add-mask::$clean_access_key_id"
-            echo "::add-mask::$clean_access_key_secret"
-            echo "OSS_ACCESS_KEY_ID=$clean_access_key_id" >> "$GITHUB_ENV"
-            echo "OSS_ACCESS_KEY_SECRET=$clean_access_key_secret" >> "$GITHUB_ENV"
-            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$INPUT_VERSION_TAG" >/dev/null 2>&1; then
-              echo "::error::Tag $INPUT_VERSION_TAG already exists in $GITHUB_REPOSITORY"
+            if [[ ! "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Use a full, immutable Android source commit SHA"
               exit 1
             fi
           fi
-
-      - name: Read canonical release notes
-        if: inputs.build_mode == 'release'
-        env:
-          FORCE_UPDATE: ${{ inputs.force_update }}
-        run: |
-          set -euo pipefail
-          notes_url="https://www.andless.tech/changelog/android/$RELEASE_VERSION/"
-          curl --fail --silent --show-error --proto '=https' --max-time 30 --retry 2 \
-            "${notes_url}metadata.json" --output "$RUNNER_TEMP/release-notes.json"
-          jq -se --arg version "$RELEASE_VERSION" --arg url "$notes_url" --argjson force "$FORCE_UPDATE" '
-            length == 1 and (.[0] | .app == "dashboard-android" and .channel == "release" and .version == $version and
-            .release_notes_url == $url and .force == $force and
-            (.changelog | type == "string" and length > 0 and utf8bytelength <= 16000))
-          ' "$RUNNER_TEMP/release-notes.json" >/dev/null
-
-      - name: Install ossutil
-        if: inputs.build_mode == 'release'
-        run: |
-          archive="$RUNNER_TEMP/ossutil-2.3.0-linux-amd64.zip"
-          install_dir="$RUNNER_TEMP/ossutil-bin"
-          curl --fail --location --retry 3 --output "$archive" \
-            https://gosspublic.alicdn.com/ossutil/v2/2.3.0/ossutil-2.3.0-linux-amd64.zip
-          echo "3ae4d9fc85a7a6e9f5654d1599766f1a3a42a3692870887b5ae9338d582ef65a  $archive" \
-            | sha256sum --check
-          mkdir -p "$install_dir"
-          unzip -q "$archive" -d "$install_dir"
-          chmod 755 "$install_dir/ossutil-2.3.0-linux-amd64/ossutil"
-          echo "$install_dir/ossutil-2.3.0-linux-amd64" >> "$GITHUB_PATH"
-
-      - name: Validate OSS credentials
-        if: inputs.build_mode == 'release'
-        env:
-          OSS_REGION: cn-shanghai
-          OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
-        run: ossutil stat oss://quic-console-ota >/dev/null
 
       - name: Check out private source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -136,7 +88,14 @@ jobs:
 
       - name: Record source revision
         working-directory: source
-        run: echo "SOURCE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          test "$actual" = "$EXPECTED_SOURCE_SHA"
+          echo "SOURCE_COMMIT=$actual" >> "$GITHUB_ENV"
+          echo "Frozen Android source: $actual"
 
       - name: Set up Java 21
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -277,6 +236,17 @@ jobs:
           fi
           echo "Verified release signing certificate SHA-256: $actual_digest"
 
+      - name: Record APK SHA-256 and native library identity
+        working-directory: source
+        run: |
+          set -euo pipefail
+          apk=example/build/app/outputs/flutter-apk/andless_dashboard.apk
+          sha256sum "$apk"
+          packaged=$(unzip -p "$apk" lib/arm64-v8a/libquic_client.so | sha256sum | cut -d' ' -f1)
+          source=$(sha256sum quic/libquic_client.so | cut -d' ' -f1)
+          test "$packaged" = "$source"
+          echo "APK native library SHA-256: $packaged"
+
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -284,91 +254,3 @@ jobs:
           path: source/example/build/app/outputs/flutter-apk/andless_dashboard.apk
           if-no-files-found: error
           retention-days: 14
-
-      - name: Publish release APK to OSS
-        if: inputs.build_mode == 'release'
-        env:
-          OSS_REGION: cn-shanghai
-          OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
-        run: |
-          set -euo pipefail
-          apk="source/example/build/app/outputs/flutter-apk/andless_dashboard.apk"
-          versioned_key="dashboard-android/release/versions/$RELEASE_TAG/andless_dashboard.apk"
-          versioned_object="oss://quic-console-ota/$versioned_key"
-          versioned_manifest="oss://quic-console-ota/dashboard-android/release/versions/$RELEASE_TAG/manifest.json"
-          latest_manifest="oss://quic-console-ota/dashboard-android/release/latest.json"
-          manifest="$RUNNER_TEMP/dashboard-android-manifest.json"
-
-          test -f "$apk"
-          apk_sha256=$(sha256sum "$apk" | awk '{print $1}')
-          apk_size=$(stat -c '%s' "$apk")
-          build_time=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-          echo "$apk_sha256  $apk"
-
-          ossutil cp "$apk" "$versioned_object" --force \
-            --content-type application/vnd.android.package-archive \
-            --cache-control "public, max-age=31536000, immutable" \
-            --metadata "version=$RELEASE_VERSION" \
-            --metadata "build-code=$GITHUB_RUN_NUMBER" \
-            --metadata "source-commit=$SOURCE_COMMIT"
-
-          jq -n \
-            --slurpfile release_notes "$RUNNER_TEMP/release-notes.json" \
-            --arg version "$RELEASE_VERSION" \
-            --arg commit "$SOURCE_COMMIT" \
-            --arg build_time "$build_time" \
-            --arg filename "andless_dashboard.apk" \
-            --arg object_key "$versioned_key" \
-            --arg sha256 "$apk_sha256" \
-            --argjson size "$apk_size" \
-            --argjson force "${{ inputs.force_update }}" \
-            '{
-              schema_version: 2,
-              app: "dashboard-android",
-              channel: "release",
-              version: $version,
-              commit: $commit,
-              build_time: $build_time,
-              force: $force,
-              changelog: $release_notes[0].changelog,
-              release_notes_url: $release_notes[0].release_notes_url,
-              device_requirements: {
-                product: "andless-pro",
-                variant: "spi-nand-128m",
-                minimum_firmware: "1.0.13"
-              },
-              artifacts: {
-                android: {
-                  filename: $filename,
-                  object_key: $object_key,
-                  sha256: $sha256,
-                  size: $size
-                }
-              }
-            }' > "$manifest"
-
-          jq . "$manifest"
-          ossutil cp "$manifest" "$versioned_manifest" --force \
-            --content-type application/json \
-            --cache-control "public, max-age=31536000, immutable"
-          ossutil cp "$manifest" "$latest_manifest" --force \
-            --content-type application/json \
-            --cache-control "no-cache, no-store, must-revalidate"
-          ossutil stat "$versioned_object"
-          ossutil stat "$versioned_manifest"
-          ossutil stat "$latest_manifest"
-
-      - name: Tag published release
-        if: inputs.build_mode == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag_object_sha=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
-            -f tag="$RELEASE_TAG" \
-            -f message="Android $RELEASE_VERSION from andless-tech/dashboard_android@$SOURCE_COMMIT" \
-            -f object="$GITHUB_SHA" \
-            -f type=commit \
-            --jq .sha)
-          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f ref="refs/tags/$RELEASE_TAG" \
-            -f sha="$tag_object_sha"
