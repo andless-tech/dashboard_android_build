@@ -76,6 +76,13 @@ jobs:
             fi
           fi
 
+      - name: Check out artifact recipient certificate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: packaging
+
       - name: Check out private source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -247,10 +254,18 @@ jobs:
           test "$packaged" = "$source"
           echo "APK native library SHA-256: $packaged"
 
-      - name: Upload APK
+      - name: Encrypt signed APK for local delivery
+        run: |
+          set -euo pipefail
+          openssl cms -encrypt -binary -aes-256-gcm -outform DER \
+            -recip packaging/.github/android-v0.0.62-artifact-recipient.pem -keyopt rsa_padding_mode:oaep \
+            -in source/example/build/app/outputs/flutter-apk/andless_dashboard.apk \
+            -out "$RUNNER_TEMP/andless-dashboard.apk.cms"
+
+      - name: Upload encrypted APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dashboard-android-${{ env.RELEASE_TAG }}-${{ inputs.build_mode }}
-          path: source/example/build/app/outputs/flutter-apk/andless_dashboard.apk
+          path: ${{ runner.temp }}/andless-dashboard.apk.cms
           if-no-files-found: error
           retention-days: 14
